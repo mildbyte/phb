@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "phb"
+version = "0.1.0"
+description = "Pointy Haired Bot"
+authors = ["mildbyte <mildbyte@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = ">=3.6"
+sanic = "^19.12.2"
+aiohttp = "^3.6.2"
+aiosqlite = "^0.11.0"
+schedule = "^0.6.0"
+pyyaml = "^5.3"
+click = "^7.0"
+cron-descriptor = "^1.2.24"
+croniter = "^0.3.31"
+pytz = "^2019.3"
+
+[tool.poetry.dev-dependencies]
+black = "^19.10b0"
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"

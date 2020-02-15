@@ -1,0 +1,5 @@
+port: 7998
+database: phb.sqlite3
+# mattermost_webhook: Link to outgoing Mattermost webhook here
+# mattermost_token: Token used by the Mattermost incoming webhook (to verify request came from Mattermost)
+timezone: Europe/London
