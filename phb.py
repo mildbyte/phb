@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import logging
 import shlex
 import sqlite3
@@ -7,6 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from io import StringIO
 
+import aiohttp
 import aiosqlite
 import click
 import pytz
@@ -43,6 +45,8 @@ parser_schedule.add_argument(
     "--window", type=int, help="Set window in which to send the standup message"
 )
 
+parser_schedules = subparsers.add_parser("schedules", help="Manage standup schedules")
+
 parser_standup = subparsers.add_parser("standup", help="Send standup message")
 parser_standup.add_argument("--username", help="Username (default sender)")
 parser_standup.add_argument(
@@ -61,6 +65,8 @@ subparsers.add_parser("help")
 
 async def set_schedule(username, conn, schedule=None, window=None):
     if schedule:
+        # validate
+        croniter(schedule)
         await conn.execute(
             "INSERT INTO schedule (username, schedule) VALUES (?, ?) "
             "ON CONFLICT (username) DO UPDATE SET schedule=excluded.schedule",
@@ -82,7 +88,7 @@ async def get_schedule(username, conn):
         return await cur.fetchone()
 
 
-async def manage_schedule(context, conn):
+async def manage_schedule(context, conn, app):
     username = context["username"]
     if context["schedule"] or context["window"]:
         await set_schedule(
@@ -92,6 +98,13 @@ async def manage_schedule(context, conn):
         print(
             "New schedule for user %s: %s (within %s hour(s))"
             % (username, get_description(schedule), window)
+        )
+        regenerate_reminder_for_user(
+            schedule,
+            username,
+            window,
+            datetime.now(pytz.timezone(context["timezone"])),
+            app,
         )
     else:
         row = await get_schedule(username, conn)
@@ -105,6 +118,19 @@ async def manage_schedule(context, conn):
         schedule, window = row
         print(
             "User %s's schedule: %s (within %d hour(s))"
+            % (username, get_description(schedule), window)
+        )
+
+
+async def get_all_schedules(context, conn):
+    async with conn.execute("SELECT username, schedule, window FROM schedule",) as cur:
+        schedules = await cur.fetchall()
+    if not schedules:
+        print("No users registered.")
+    print("Standup schedules: ")
+    for username, schedule, window in schedules:
+        print(
+            "  * %s: %s (within %d hour(s))"
             % (username, get_description(schedule), window)
         )
 
@@ -327,7 +353,9 @@ async def slash_command(request):
             context["username"] = context.get("username") or username
             context["timezone"] = request.app.phb_config.get("timezone", "UTC")
             if result.subparser == "schedule":
-                await manage_schedule(context, conn=request.app.conn)
+                await manage_schedule(context, conn=request.app.conn, app=request.app)
+            elif result.subparser == "schedules":
+                await get_all_schedules(context, request.app.conn)
             elif result.subparser == "standup":
                 await standup(context, request.app.conn)
             elif result.subparser == "stats":
@@ -360,8 +388,116 @@ async def setup_db(app, loop):
     app.conn = conn
 
 
+async def request_standup(username, delay, app):
+    await asyncio.sleep(delay)
+    logging.info("Running standup request job for %s", username)
+    row = await get_schedule(username, conn=app.conn)
+    if not row:
+        return
+
+    schedule, window = row
+    hook_url = app.phb_config["mattermost_webhook"]
+    logging.info("POSTing to %s", hook_url)
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            hook_url,
+            json={
+                "text": "@%s: SITREP please (@phb standup [...], you have %d hour(s))"
+                % (username, window)
+            },
+        ) as result:
+            result.raise_for_status()
+
+    logging.info("Sent standup request to %s", username)
+    req, rem = app.reminder_state[username]
+    if not rem:
+        now = datetime.now(pytz.timezone(app.phb_config.get("timezone", "UTC")))
+        regenerate_reminder_for_user(schedule, username, window, now, app)
+    else:
+        app.reminder_state[username] = None, rem
+
+
+async def remind_standup(username, delay, app):
+    await asyncio.sleep(delay)
+    logging.info("Running standup reminder job for %s", username)
+    row = await get_schedule(username, conn=app.conn)
+    if not row:
+        return
+
+    schedule, window = row
+    now = datetime.now(pytz.timezone(app.phb_config.get("timezone", "UTC")))
+    row = await get_standup_message(username, midnight(now), app.conn)
+    if not row:
+        hook_url = app.phb_config["mattermost_webhook"]
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                hook_url,
+                json={
+                    "text": "@%s: You only have 1 hour left for your standup message to be counted!"
+                    % username
+                },
+            ) as result:
+                result.raise_for_status()
+    regenerate_reminder_for_user(schedule, username, window, now, app)
+
+
+async def regenerate_reminders(app):
+    logging.info("Regenerating all reminder jobs")
+    for req, rem in app.reminder_state.values():
+        if req:
+            req.cancel()
+        if rem:
+            rem.cancel()
+    app.reminder_state = {}
+
+    async with app.conn.execute(
+        "SELECT username, schedule, window FROM schedule",
+    ) as cur:
+        schedules = await cur.fetchall()
+    now = datetime.now(pytz.timezone(app.phb_config.get("timezone", "UTC")))
+    for username, schedule, window in schedules:
+        regenerate_reminder_for_user(schedule, username, window, now, app)
+
+
+def regenerate_reminder_for_user(schedule, username, window, now, app):
+    next_time = croniter(schedule, start_time=now).get_next(ret_type=datetime)
+    # use astimezone().timestamp() to convert to local timestamp
+    delay = (next_time - now).total_seconds()
+    request_job = asyncio.create_task(request_standup(username, delay, app))
+    logging.info(
+        "Set up standup request job for user %s at %s (in %d)",
+        username,
+        next_time,
+        delay,
+    )
+    if window > 1:
+        reminder_ts = next_time + timedelta(hours=window - 1)
+        delay = (reminder_ts - now).total_seconds()
+        reminder_job = asyncio.create_task(remind_standup(username, delay, app))
+        logging.info(
+            "Set up standup reminder job for user %s at %s (in %d)",
+            username,
+            reminder_ts,
+            delay,
+        )
+    else:
+        reminder_job = None
+    app.reminder_state[username] = (request_job, reminder_job)
+
+
+@app.listener("after_server_start")
+async def setup_reminders(app, loop):
+    app.reminder_state = {}
+    await regenerate_reminders(app)
+
+
 @app.listener("before_server_stop")
 async def shutdown_db(app, loop):
+    for req, rem in app.reminder_state.values():
+        if req:
+            req.cancel()
+        if rem:
+            rem.cancel()
     await app.conn.commit()
     await app.conn.close()
 
