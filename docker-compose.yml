@@ -1,0 +1,14 @@
+version: "3.4"
+services:
+  phb:
+    image: phb
+    build: .
+    ports:
+      - "127.0.0.1:7998:7998"
+    volumes:
+      - ./data:/data 
+    command:
+      - python3
+      - /phb/phb.py
+      - /data/config.yml
+
