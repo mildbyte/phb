@@ -5,10 +5,19 @@ services:
     build: .
     ports:
       - "127.0.0.1:7998:7998"
+    restart: on-failure
     volumes:
-      - ./data:/data 
+      - ./data:/data
+      - ./phb.py:/phb/phb.py
     command:
       - python3
       - /phb/phb.py
       - /data/config.yml
+# Hack to get Mattermost speaking to phb without having to go over
+# the host network
+    networks:
+      - mattermost_default
+networks:
+  mattermost_default:
+    external: true
 

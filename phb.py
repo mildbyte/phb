@@ -302,8 +302,8 @@ async def stats(context, conn):
             result += f" **MAXED OUT!**"
         return result
 
-    print(_print_streak(current_streak, current_streak_start))
-    print(_print_streak(longest_streak, longest_streak_start))
+    print("Current streak: " + _print_streak(current_streak, current_streak_start))
+    print("Longest streak: " + _print_streak(longest_streak, longest_streak_start))
     print()
     interval_start = today - timedelta(days=6)
     days = [(interval_start + timedelta(days=i)).replace(tzinfo=None) for i in range(7)]
