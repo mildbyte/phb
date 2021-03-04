@@ -1,5 +1,7 @@
 port: 7998
 database: phb.sqlite3
-# mattermost_webhook: Link to outgoing Mattermost webhook here
-# mattermost_token: Token used by the Mattermost incoming webhook (to verify request came from Mattermost)
+mattermost_webhook: Link to outgoing Mattermost webhook here
+mattermost_token: Token used by the Mattermost incoming webhook (to verify request came from Mattermost)
 timezone: Europe/London
+# Longest streak possible (after which it caps out)
+max_streak: 20

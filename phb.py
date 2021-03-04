@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import logging
 import shlex
 import sqlite3
@@ -7,6 +8,7 @@ import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from io import StringIO
+import random
 
 import aiohttp
 import aiosqlite
@@ -46,6 +48,8 @@ parser_schedule.add_argument(
 )
 
 parser_schedules = subparsers.add_parser("schedules", help="Manage standup schedules")
+
+parser_121 = subparsers.add_parser("121", help="Have a professional one-on-one session")
 
 parser_standup = subparsers.add_parser("standup", help="Send standup message")
 parser_standup.add_argument("--username", help="Username (default sender)")
@@ -139,7 +143,7 @@ async def get_standup_message(username, date, conn):
     async with conn.execute(
         "SELECT message, timestamp FROM messages "
         "WHERE username = ? AND date(timestamp) = date(?)",
-        parameters=(username, date),
+        parameters=(username, date.astimezone(pytz.utc)),
     ) as cur:
         return await cur.fetchone()
 
@@ -173,7 +177,7 @@ async def standup(context, conn):
     tz = pytz.timezone(context["timezone"])
 
     if context["date"]:
-        update_date = midnight(tz.localize(context["date"]))
+        update_date = midnight(pytz.utc.localize(context["date"]))
         previous_message = await get_standup_message(username, update_date, conn)
 
         if not text:
@@ -208,7 +212,7 @@ async def standup(context, conn):
         )
         return
 
-    reply = "@%s Thanks!" % username
+    reply = "@%s Congrats!" % username
     row = await get_schedule(username, conn)
     if row:
         schedule, window = row
@@ -286,29 +290,26 @@ async def stats(context, conn):
         longest_streak = current_streak
         longest_streak_start = current_streak_start
 
-    print(
-        "Current streak: %d day(s)" % current_streak
-        + (
-            (" (started on %s)" % current_streak_start.strftime("%Y-%m-%d"))
-            if current_streak_start
-            else ""
-        )
-    )
-    print(
-        "Longest streak: %d day(s)" % longest_streak
-        + (
-            (" (started on %s)" % longest_streak_start.strftime("%Y-%m-%d"))
-            if longest_streak_start
-            else ""
-        )
-    )
+    streak_cap = app.config.get("max_streak")
+    if streak_cap:
+        streak_cap = int(streak_cap)
 
+    def _print_streak(streak, streak_start):
+        result = f"{min(streak, streak_cap) if streak_cap else streak} day(s)"
+        if streak_start:
+            result += f" (started on {streak_start.strftime('%Y-%m-%d')})"
+        if streak_cap and streak >= streak_cap:
+            result += f" **MAXED OUT!**"
+        return result
+
+    print(_print_streak(current_streak, current_streak_start))
+    print(_print_streak(longest_streak, longest_streak_start))
     print()
     interval_start = today - timedelta(days=6)
-    days = [interval_start + timedelta(days=i) for i in range(7)]
-    last_week = {midnight(t): m for t, m in message_history if t > interval_start}
+    days = [(interval_start + timedelta(days=i)).replace(tzinfo=None) for i in range(7)]
+    last_week = {midnight(t).replace(tzinfo=None): m for t, m in message_history if t > interval_start}
     ct = croniter(schedule, start_time=interval_start, ret_type=datetime)
-    scheduled = [midnight(next(ct)) for _ in range(7)]
+    scheduled = [midnight(next(ct)).replace(tzinfo=None) for _ in range(7)]
 
     print("Last 7 days:")
     for ts in reversed(days):
@@ -354,6 +355,8 @@ async def slash_command(request):
             context["timezone"] = request.app.phb_config.get("timezone", "UTC")
             if result.subparser == "schedule":
                 await manage_schedule(context, conn=request.app.conn, app=request.app)
+            if result.subparser == "121":
+                await send_question(request.app, username, hook=False)
             elif result.subparser == "schedules":
                 await get_all_schedules(context, request.app.conn)
             elif result.subparser == "standup":
@@ -491,6 +494,44 @@ async def setup_reminders(app, loop):
     await regenerate_reminders(app)
 
 
+async def send_question(app, victim=None, hook=True):
+    if not victim:
+        async with app.conn.execute("SELECT DISTINCT(username) FROM schedule",) as cur:
+            victims = await cur.fetchall()
+            victim = random.choice([v[0] for v in victims])
+    question = random.choice([q["question"] for q in app.questions])
+    logging.info("Victim %s, question %s", victim, question)
+
+    text = "%s, %s" % (victim, question)
+    logging.info(text)
+
+    if hook:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url=app.phb_config["mattermost_webhook"], json={"text": text},
+            ) as result:
+                result.raise_for_status()
+    else:
+        print(text)
+
+
+async def spam_coro(app):
+    while True:
+        delay = random.expovariate(1.0 / app.phb_config["questions_mean"])
+        logging.info("Next spam: %d s (%.2f h)", delay * 3600, delay)
+        await asyncio.sleep(delay * 3600)
+        await send_question(app)
+
+
+@app.listener("after_server_start")
+async def setup_spam(app, loop):
+    if "questions" in app.phb_config:
+        with open(app.phb_config["questions"]) as f:
+            app.questions = json.load(f)
+
+        asyncio.create_task(spam_coro(app))
+
+
 @app.listener("before_server_stop")
 async def shutdown_db(app, loop):
     for req, rem in app.reminder_state.values():
@@ -507,7 +548,7 @@ async def shutdown_db(app, loop):
 def main(config_file):
     config = yaml.load(config_file)
     app.phb_config = config
-    app.run(host="127.0.0.1", port=config["port"], debug=True)
+    app.run(host=config.get("host", "127.0.0.1"), port=config["port"], debug=True)
 
 
 if __name__ == "__main__":
