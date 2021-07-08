@@ -339,7 +339,12 @@ async def slash_command(request):
     username = request.form["user_name"][0]
 
     logging.info("%s says: %s", username, command)
-
+    
+    # workaround for using with slash commands (/phb ...)
+    slash_mode = False
+    if not command.startswith("@phb"):
+        slash_mode = True
+        command = "@phb " + command
     args = command.split()[1:]
     # workaround for freehand text
     if args[0] != "standup":
@@ -348,6 +353,8 @@ async def slash_command(request):
     stream = StringIO()
     with redirect_stdout_stderr(stream):
         try:
+            if slash_mode:
+                print("@%s says: %s" % (username, command))
             result = parser.parse_args(args)
             logging.info(result)
             context = vars(result)
