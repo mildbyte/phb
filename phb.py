@@ -127,7 +127,9 @@ async def manage_schedule(context, conn, app):
 
 
 async def get_all_schedules(context, conn):
-    async with conn.execute("SELECT username, schedule, window FROM schedule",) as cur:
+    async with conn.execute(
+        "SELECT username, schedule, window FROM schedule",
+    ) as cur:
         schedules = await cur.fetchall()
     if not schedules:
         print("No users registered.")
@@ -307,7 +309,11 @@ async def stats(context, conn):
     print()
     interval_start = today - timedelta(days=6)
     days = [(interval_start + timedelta(days=i)).replace(tzinfo=None) for i in range(7)]
-    last_week = {midnight(t).replace(tzinfo=None): m for t, m in message_history if t > interval_start}
+    last_week = {
+        midnight(t).replace(tzinfo=None): m
+        for t, m in message_history
+        if t > interval_start
+    }
     ct = croniter(schedule, start_time=interval_start, ret_type=datetime)
     scheduled = [midnight(next(ct)).replace(tzinfo=None) for _ in range(7)]
 
@@ -339,7 +345,7 @@ async def slash_command(request):
     username = request.form["user_name"][0]
 
     logging.info("%s says: %s", username, command)
-    
+
     # workaround for using with slash commands (/phb ...)
     slash_mode = False
     if not command.startswith("@phb"):
@@ -355,25 +361,40 @@ async def slash_command(request):
         try:
             if slash_mode:
                 print("@%s says: %s" % (username, command))
-            result = parser.parse_args(args)
-            logging.info(result)
-            context = vars(result)
-            context["username"] = context.get("username") or username
-            context["timezone"] = request.app.phb_config.get("timezone", "UTC")
-            if result.subparser == "schedule":
-                await manage_schedule(context, conn=request.app.conn, app=request.app)
-            if result.subparser == "121":
-                await send_question(request.app, username, hook=False)
-            elif result.subparser == "schedules":
-                await get_all_schedules(context, request.app.conn)
-            elif result.subparser == "standup":
+            if (
+                args[0] == "standup"
+                and len(args) > 1
+                and args[1] not in ("--username", "--date")
+            ):
+                context = {
+                    "username": username,
+                    "timezone": request.app.phb_config.get("timezone", "UTC"),
+                    "text": " ".join(command[1:]),
+                    "date": None,
+                }
                 await standup(context, request.app.conn)
-            elif result.subparser == "stats":
-                await stats(context, request.app.conn)
-            elif result.subparser == "help":
-                parser.print_help()
             else:
-                raise ValueError("Unknown command, see @phb help!")
+                result = parser.parse_args(args)
+                logging.info(result)
+                context = vars(result)
+                context["username"] = context.get("username") or username
+                context["timezone"] = request.app.phb_config.get("timezone", "UTC")
+                if result.subparser == "schedule":
+                    await manage_schedule(
+                        context, conn=request.app.conn, app=request.app
+                    )
+                if result.subparser == "121":
+                    await send_question(request.app, username, hook=False)
+                elif result.subparser == "schedules":
+                    await get_all_schedules(context, request.app.conn)
+                elif result.subparser == "standup":
+                    await standup(context, request.app.conn)
+                elif result.subparser == "stats":
+                    await stats(context, request.app.conn)
+                elif result.subparser == "help":
+                    parser.print_help()
+                else:
+                    raise ValueError("Unknown command, see @phb help!")
         except SystemExit:
             logging.exception("Parse failure")
         except Exception as e:
@@ -503,7 +524,9 @@ async def setup_reminders(app, loop):
 
 async def send_question(app, victim=None, hook=True):
     if not victim:
-        async with app.conn.execute("SELECT DISTINCT(username) FROM schedule",) as cur:
+        async with app.conn.execute(
+            "SELECT DISTINCT(username) FROM schedule",
+        ) as cur:
             victims = await cur.fetchall()
             victim = random.choice([v[0] for v in victims])
     question = random.choice([q["question"] for q in app.questions])
@@ -515,7 +538,8 @@ async def send_question(app, victim=None, hook=True):
     if hook:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                url=app.phb_config["mattermost_webhook"], json={"text": text},
+                url=app.phb_config["mattermost_webhook"],
+                json={"text": text},
             ) as result:
                 result.raise_for_status()
     else:
