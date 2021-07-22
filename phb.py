@@ -369,7 +369,7 @@ async def slash_command(request):
                 context = {
                     "username": username,
                     "timezone": request.app.phb_config.get("timezone", "UTC"),
-                    "text": " ".join(command[1:]),
+                    "text": " ".join(args[1:]),
                     "date": None,
                 }
                 await standup(context, request.app.conn)
