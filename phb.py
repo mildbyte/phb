@@ -292,7 +292,7 @@ async def stats(context, conn):
         longest_streak = current_streak
         longest_streak_start = current_streak_start
 
-    streak_cap = app.config.get("max_streak")
+    streak_cap = app.phb_config.get("max_streak")
     if streak_cap:
         streak_cap = int(streak_cap)
 
