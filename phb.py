@@ -491,6 +491,7 @@ async def regenerate_reminders(app):
 
 
 def regenerate_reminder_for_user(schedule, username, window, now, app):
+
     next_time = croniter(schedule, start_time=now).get_next(ret_type=datetime)
     # use astimezone().timestamp() to convert to local timestamp
     delay = (next_time - now).total_seconds()
@@ -501,7 +502,7 @@ def regenerate_reminder_for_user(schedule, username, window, now, app):
         next_time,
         delay,
     )
-    if window > 1:
+    if window > 1 and app.phb_config.get("reminders", False):
         reminder_ts = next_time + timedelta(hours=window - 1)
         delay = (reminder_ts - now).total_seconds()
         reminder_job = asyncio.create_task(remind_standup(username, delay, app))

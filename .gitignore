@@ -130,3 +130,5 @@ dmypy.json
 
 config.yml
 *.sqlite3
+
+*.json
