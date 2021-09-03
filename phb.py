@@ -383,7 +383,7 @@ async def slash_command(request):
                     await manage_schedule(
                         context, conn=request.app.conn, app=request.app
                     )
-                if result.subparser == "121":
+                elif result.subparser == "121":
                     await send_question(request.app, username, hook=False)
                 elif result.subparser == "schedules":
                     await get_all_schedules(context, request.app.conn)
