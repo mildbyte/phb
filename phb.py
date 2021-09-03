@@ -115,7 +115,7 @@ async def manage_schedule(context, conn, app):
         if not row:
             print(
                 "User %s has no schedule. Set one with e.g. "
-                '@phb schedule --username %s --schedule "0 9 * * 1-5" --window 3'
+                '/phb schedule --username %s --schedule "0 9 * * 1-5" --window 3'
                 % (username, username)
             )
             return
@@ -222,9 +222,9 @@ async def standup(context, conn):
         deadline = ct.get_next(ret_type=datetime) + timedelta(hours=window)
         logging.info("Deadline was %s", deadline)
         if deadline < now:
-            reply += " (you're late though, see @phb schedule)"
+            reply += " (you're late though, see /phb schedule)"
     else:
-        reply += " (feel free to set a schedule with @phb schedule)"
+        reply += " (feel free to set a schedule with /phb schedule)"
     await set_standup_message(username, now, text, conn)
     print(reply)
 
@@ -239,7 +239,7 @@ async def stats(context, conn):
     local_tz = pytz.timezone(context["timezone"])
 
     if not row:
-        print("%s has no schedule set, set one with @phb schedule." % username)
+        print("%s has no schedule set, set one with /phb schedule." % username)
         return
 
     schedule, window = row
@@ -394,7 +394,7 @@ async def slash_command(request):
                 elif result.subparser == "help":
                     parser.print_help()
                 else:
-                    raise ValueError("Unknown command, see @phb help!")
+                    raise ValueError("Unknown command, see /phb help!")
         except SystemExit:
             logging.exception("Parse failure")
         except Exception as e:
@@ -433,7 +433,7 @@ async def request_standup(username, delay, app):
         async with session.post(
             hook_url,
             json={
-                "text": "@%s: SITREP please (@phb standup [...], you have %d hour(s))"
+                "text": "@%s: SITREP please (/phb standup [...], you have %d hour(s))"
                 % (username, window)
             },
         ) as result:
